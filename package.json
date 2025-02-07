@@ -18,6 +18,7 @@
     "@metaplex-foundation/umi": "^0.8.9",
     "@metaplex-foundation/umi-bundle-defaults": "^0.8.9",
     "@metaplex-foundation/umi-storage-mock": "^0.8.9",
+    "@metaplex-foundation/umi-uploader-irys": "^1.0.0",
     "@metaplex-foundation/umi-uploader-nft-storage": "^0.8.9",
     "@solana-developers/helpers": "^2.7.0",
     "@solana/spl-token": "^0.3.7",

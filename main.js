@@ -1,132 +1,104 @@
-import bs58 from "bs58";
-import { Transaction, SystemProgram, Keypair, Connection, sendAndConfirmTransaction } from "@solana/web3.js";
-import { MINT_SIZE, TOKEN_PROGRAM_ID, createInitializeMintInstruction, getMinimumBalanceForRentExemptMint, getAssociatedTokenAddress, createAssociatedTokenAccountInstruction, createMintToInstruction } from '@solana/spl-token';
-import { createCreateMetadataAccountV3Instruction } from '@metaplex-foundation/mpl-token-metadata';
-import { bundlrStorage, findMetadataPda, keypairIdentity, Metaplex, } from '@metaplex-foundation/js';
-import { nftStorage } from "@metaplex-foundation/js-plugin-nft-storage";
-import { key, tokenPriv } from './secret.js';
+const { createUmi } = require("@metaplex-foundation/umi-bundle-defaults");
+const {
+  generateSigner,
+  signerIdentity,
+  createSignerFromKeypair,
+  transactionBuilder,
+} = require("@metaplex-foundation/umi");
+const {
+  mplTokenMetadata,
+  createV1,
+  mintV1,
+  TokenStandard,
+} = require("@metaplex-foundation/mpl-token-metadata");
+const { createGenericFile } = require("@metaplex-foundation/umi");
+const bs58 = require("bs58");
+const fs = require("fs");
+const { hosueKey, tokenKey } = require("./secret");
+const { irysUploader } = require("@metaplex-foundation/umi-uploader-irys");
 
-const endpoint = `https://crimson-restless-snow.solana-mainnet.quiknode.pro/${YOUR_API_KEY}`;
-const solanaConnection = new Connection(endpoint);
-
-const MINT_CONFIG = {//should be changed in your cases
+const MINT_CONFIG = {
   numDecimals: 6,
-  numberTokens: 1000000000
-}
-
-const MY_TOKEN_METADATA = {
-  name: "TOKEN_NAME",
-  symbol: "TOKEN_SYMBOL",
-  description: "Token description",
-  image: "Image link"
-}
-
-const ON_CHAIN_METADATA = {
-  name: MY_TOKEN_METADATA.name,
-  symbol: MY_TOKEN_METADATA.symbol,
-  uri: "",
-  sellerFeeBasisPoints: 0,
-  creators: null,
-  collection: null,
-  uses: null
+  numberTokens: 30000,
 };
 
-const uploadMetadata = async (wallet, tokenMetadata) => {
+const genericFile = createGenericFile(
+  fs.readFileSync("./assets/DB.png"),
+  "DB.png",
+  { contentType: "image/png" }
+);
+const endpoint = "https://api.devnet.solana.com";
+// const endpoint = "https://api.mainnet-beta.solana.com";
 
-  const metaplex = Metaplex.make(solanaConnection)
-    .use(keypairIdentity(wallet))
-    .use(bundlrStorage({
-      address: 'https://devnet.bundlr.network',
-      providerUrl: endpoint,
-      timeout: 60000,
-    }))
-    .use(nftStorage());
 
-  const { uri } = await metaplex.nfts().uploadMetadata(tokenMetadata);
-  console.log(`nftStorage: `, uri);
+console.log(endpoint)
+
+const umi = createUmi(endpoint)
+  .use(mplTokenMetadata())
+  .use(irysUploader({
+    // mainnet address: "https://node1.irys.xyz"
+    // devnet address: "https://devnet.irys.xyz"
+    address: "https://devnet.irys.xyz",
+  }));
+const keypair = umi.eddsa.createKeypairFromSecretKey(bs58.decode(hosueKey));
+const myKeypairSigner = createSignerFromKeypair(umi, keypair);
+umi.use(signerIdentity(myKeypairSigner));
+
+const tokenKeypair = umi.eddsa.createKeypairFromSecretKey(bs58.decode(tokenKey));
+const tokenKeypairSigner = createSignerFromKeypair(umi, tokenKeypair);
+
+const tokenMetadata = {
+  name: "DGBID",
+  symbol: "DB",
+  description:
+    "BID is the native token of the Degen Bid platform and is used as the currency for bidding on auctions. Each $BID token is equivalent to one bid on a Penny Auction, providing a simple and easy-to-use currency for participating in auctions.",
+  image: "",
+};
+
+const uploadMetadata = async () => {
+  const [imageUri] = await umi.uploader.upload([genericFile]);
+  tokenMetadata.image = imageUri;
+  const uri = await umi.uploader.uploadJson(tokenMetadata);
+  console.log("token metadata uri:", uri);
   return uri;
+};
 
-}
-
-
-const createNewMintTransaction = async (connection, payer, mintKeypair, destinationWallet, mintAuthority, freezeAuthority) => {
-  const requiredBalance = await getMinimumBalanceForRentExemptMint(connection);
-  const metadataPDA = await findMetadataPda(mintKeypair.publicKey);
-  const tokenATA = await getAssociatedTokenAddress(mintKeypair.publicKey, destinationWallet);
-
-  const createNewTokenTransaction = new Transaction().add(
-    SystemProgram.createAccount({
-      fromPubkey: payer.publicKey,
-      newAccountPubkey: mintKeypair.publicKey,
-      space: MINT_SIZE,
-      lamports: requiredBalance,
-      programId: TOKEN_PROGRAM_ID,
-    }),
-    createInitializeMintInstruction(
-      mintKeypair.publicKey, //Mint Address
-      MINT_CONFIG.numDecimals, //Number of Decimals of New mint
-      mintAuthority, //Mint Authority
-      freezeAuthority, //Freeze Authority
-      TOKEN_PROGRAM_ID),
-    createAssociatedTokenAccountInstruction(
-      payer.publicKey, //Payer 
-      tokenATA, //Associated token account 
-      payer.publicKey, //token owner
-      mintKeypair.publicKey, //Mint
-    ),
-    createMintToInstruction(
-      mintKeypair.publicKey,
-      tokenATA,
-      mintAuthority,
-      MINT_CONFIG.numberTokens * Math.pow(10, MINT_CONFIG.numDecimals),
-    ),
-    createCreateMetadataAccountV3Instruction(
-      {
-        metadata: metadataPDA,
-        mint: mintKeypair.publicKey,
-        mintAuthority: mintAuthority,
-        payer: payer.publicKey,
-        updateAuthority: mintAuthority,
-      },
-      {
-        createMetadataAccountArgsV3:
-        {
-          data: ON_CHAIN_METADATA,
-          isMutable: true,
-          collectionDetails: null
-        },
-      }
-    ),
-  );
-
-  return createNewTokenTransaction;
-}
+const mint = async ({ uri }) => {
+  const signer = generateSigner(umi); //devnet
+  // const signer = tokenKeypairSigner; //mainnet
+  console.log('signer', signer);
+  const tx = await transactionBuilder()
+    .add(
+      createV1(umi, {
+        mint: signer,
+        authority: umi.identity,
+        name: tokenMetadata.name,
+        uri: uri,
+        sellerFeeBasisPoints: 0,
+        tokenStandard: TokenStandard.Fungible,
+      })
+    )
+    .add(
+      mintV1(umi, {
+        mint: signer.publicKey,
+        authority: umi.identity,
+        amount: MINT_CONFIG.numberTokens,
+        tokenOwner: keypair.publicKey,
+        tokenStandard: TokenStandard.NonFungible,
+      })
+    )
+    .sendAndConfirm(umi, { send: { commitment: "finalized" } });
+  console.log("New token minted", signer.publicKey);
+};
 
 const main = async () => {
-  console.log(`---STEP 1: Uploading MetaData---`);
-  const userWallet = Keypair.fromSecretKey(new Uint8Array(bs58.decode(key)));
-  let metadataUri = await uploadMetadata(userWallet, MY_TOKEN_METADATA);
-  ON_CHAIN_METADATA.uri = metadataUri;
+  console.log("=====Mint SPL TOKEN=====");
 
-  console.log(`---STEP 2: Creating Mint Transaction---`);
-  let mintKeypair = Keypair.fromSecretKey(new Uint8Array(bs58.decode(tokenPriv)));
-  console.log(`New Mint Address: `, bs58.encode(mintKeypair.secretKey));
-  console.log("puc", mintKeypair.publicKey.toString())
+  console.log("   Step 1: Uploading metadata");
+  const metadataUri = await uploadMetadata();
 
-  const newMintTransaction = await createNewMintTransaction(
-    solanaConnection,
-    userWallet,
-    mintKeypair,
-    userWallet.publicKey,
-    userWallet.publicKey,
-    userWallet.publicKey
-  );
-
-  console.log(`---STEP 3: Executing Mint Transaction---`);
-  const transactionId = await sendAndConfirmTransaction(solanaConnection, newMintTransaction, [userWallet, mintKeypair])
-  console.log(`Transaction ID: `, transactionId);
-  console.log(`Succesfully minted ${MINT_CONFIG.numberTokens} ${ON_CHAIN_METADATA.symbol} to ${userWallet.publicKey.toString()}.`);
-  console.log(`View Transaction: https://explorer.solana.com/tx/${transactionId}`);
-}
+  console.log("   Step 2: Minting token");
+  await mint({ uri: metadataUri });
+};
 
 main();
